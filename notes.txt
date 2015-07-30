@@ -1,0 +1,70 @@
+First error trying to connect to Heroku's SSL endpoint:
+
+    bundle exec puppet agent --test \
+      --server puppethero.herokuapp.com \
+      --masterport=443
+    Error: Could not request certificate: SSL_connect returned=1 errno=0 \
+     state=SSLv3 read server certificate B: certificate verify failed: \
+     [unable to get local issuer certificate for \
+     /C=US/O=DigiCert Inc/OU=www.digicert.com/CN=DigiCert SHA2 High Assurance Server CA]
+
+I was able to overcome this error by using a large bundle for the localcacert
+option, but encountered a new error related to the CRL:
+
+    bundle exec puppet agent --test \
+      --server puppethero.herokuapp.com \
+      --masterport=443 \
+      --localcacert resources/ca-bundle.crt
+    Warning: SSL_connect returned=1 errno=0 state=SSLv3 read server certificate\
+    B: certificate verify failed: [unable to get certificate CRL for \
+    /C=US/ST=California/L=San Francisco/O=Heroku, Inc./CN=*.herokuapp.com]
+
+This too was easy to overcome by disabling CRL checking with the
+--no-certificate_revocation option, but alas a new SSL error emerged:
+
+    bundle exec puppet agent --test \
+      --server puppethero.herokuapp.com \
+      --masterport=443 \
+      --localcacert resources/ca-bundle.crt \
+      --no-certificate_revocation
+    SSL_connect returned=1 errno=0 state=SSLv3 read server certificate \
+    B: certificate verify failed: [wrong public key type]
+
+At this point I'm struggling because the agent always replaces the localcacert
+file, which I manually created as a bundle containing the DigiCert root and
+intermediate, with the Puppet CA certificate which has nothing to do with
+Heroku's load balancer.  I'm going to try and address this problem by wrapping
+the rack application with a middleware that intercepts
+`/puppet-ca/v1/certificate/ca` requests and returns the heroku appropriate
+bundle.
+
+IT WORKS!
+
+Got this all working by adding a Rack middleware as described above.  The
+middleware is in config.ru.
+
+    bundle exec puppet agent --test --server puppethero.herokuapp.com --masterport=443 --no-certificate_revocation
+    Info: Retrieving pluginfacts
+    Info: Retrieving plugin
+    Info: Caching catalog for mccune
+    Info: Applying configuration version '1438300176'
+    Notice: Hello World!
+    Notice: /Stage[main]/Helloworld/Notify[Hello World!]/message: defined 'message' as 'Hello World!'
+    Notice: Applied catalog in 0.02 seconds
+
+However, there's a bit of a UX issue when blowing away the agent SSL certificates.  The master returns the stale certificate:
+
+    bundle exec puppet agent --test --server puppethero.herokuapp.com --masterport=443 --no-certificate_revocation
+    Info: Creating a new SSL key for mccune
+    Info: Caching certificate for ca
+    Info: Caching certificate for mccune
+    Error: Could not request certificate: The certificate retrieved from the master does not match the agent's private key.
+    Certificate fingerprint: AB:FA:AB:3F:89:6D:7D:0C:57:CD:A8:AD:01:C4:72:77:6D:55:FB:D4:F3:DE:39:2E:20:F7:6D:11:98:ED:3F:42
+    To fix this, remove the certificate from both the master and the agent and then start a puppet run, which will automatically regenerate a certficate.
+    On the master:
+      puppet cert clean mccune
+    On the agent:
+      1a. On most platforms: find /Users/jeff/.puppetlabs/etc/puppet/ssl -name mccune.pem -delete
+      1b. On Windows: del "/Users/jeff/.puppetlabs/etc/puppet/ssl/mccune.pem" /f
+      2. puppet agent -t
+    Exiting; failed to retrieve certificate and waitforcert is disabled

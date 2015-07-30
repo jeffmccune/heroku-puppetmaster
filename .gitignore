@@ -14,3 +14,9 @@
 # Ignore all logfiles and tempfiles.
 /log/*.log
 /tmp
+
+# Puppet Runtime State
+/puppet/conf/ssl/
+/puppet/run/
+/puppet/log/*.log
+/puppet/var/yaml/
