@@ -29,6 +29,29 @@ ARGV << "--codedir" << File.expand_path("puppet/code")
 # delivered during catalog compilation.
 ARGV << "--always_cache_features"
 
+# NOTE: We have to intercept agent requests for the CA certificate because we
+# don't want the agent to replace their local ca certificate with a copy of the
+# Puppet CA because the Puppet CA has nothing to do with the Heroku load
+# balancer which is using a certificate issued by digicert.com.
+class HerokuSSL
+  def initialize(app)
+    @headers = { 'Content-Type' => 'text/plain' }
+    @cacert = File.readlines('resources/heroku-bundle.crt')
+    @app = app
+  end
+
+  def call(env)
+    if env['REQUEST_PATH'] == '/puppet-ca/v1/certificate/ca'
+      [200, @headers, @cacert]
+    else
+      @app.call(env)
+    end
+  end
+end
+
+# Use the HerokuSSL as a middleware
+use HerokuSSL
+
 # NOTE: it's unfortunate that we have to use the "CommandLine" class
 #  here to launch the app, but it contains some initialization logic
 #  (such as triggering the parsing of the config file) that is very
@@ -45,4 +68,3 @@ require 'puppet/util/command_line'
 # we're usually running inside a Rack::Builder.new {} block,
 # therefore we need to call run *here*.
 run Puppet::Util::CommandLine.new.execute
-
