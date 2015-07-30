@@ -18,3 +18,5 @@
 # Puppet Runtime State
 /puppet/conf/ssl/
 /puppet/run/
+/puppet/log/*.log
+/puppet/var/yaml/
